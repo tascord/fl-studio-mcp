@@ -33,6 +33,8 @@ class FLStudioTrigger:
             self._trigger_func = self._trigger_macos
         elif self._system == "Windows":
             self._trigger_func = self._trigger_windows
+        elif self._system == "Linux":
+            self._trigger_func = self._trigger_linux
         else:
             self._trigger_func = None
 
@@ -177,6 +179,43 @@ class FLStudioTrigger:
         except Exception:
             return False
 
+    def _trigger_linux(self) -> bool:
+        """Trigger FL Studio under Wine/Bottles using xdotool.
+
+        Expected dependencies: xdotool (and X11 session compatibility).
+        """
+        try:
+            # Find an FL Studio window and focus it.
+            search = subprocess.run(
+                ["xdotool", "search", "--name", "FL Studio"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if search.returncode != 0:
+                return False
+
+            window_ids = [line.strip() for line in search.stdout.splitlines() if line.strip()]
+            if not window_ids:
+                return False
+
+            window_id = window_ids[-1]
+            subprocess.run(
+                ["xdotool", "windowactivate", "--sync", window_id],
+                capture_output=True,
+                timeout=5,
+            )
+
+            # FL's default script shortcut for ComposeWithLLM is Ctrl+Alt+Y.
+            subprocess.run(
+                ["xdotool", "key", "--window", window_id, "ctrl+alt+y"],
+                capture_output=True,
+                timeout=5,
+            )
+            return True
+        except Exception:
+            return False
+
     def trigger(self, delay: float = TRIGGER_DELAY) -> bool:
         """Trigger FL Studio to execute the Piano Roll script.
 
@@ -210,7 +249,7 @@ class FLStudioTrigger:
         """Get the keystroke used for this platform."""
         if self._system == "Darwin":
             return "Cmd+Opt+Y"
-        elif self._system == "Windows":
+        elif self._system in ("Windows", "Linux"):
             return "Ctrl+Alt+Y"
         return "Unknown"
 

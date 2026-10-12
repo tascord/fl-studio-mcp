@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # FL Studio MCP Server - One-command Installation
 # Windows: use install.ps1 in PowerShell instead of this script.
 #
@@ -58,6 +58,9 @@ echo -e "${YELLOW}[3/5]${NC} Setting up FL Studio integration..."
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS - Run the setup script
     bash "$SCRIPT_DIR/scripts/setup.sh"
+elif [[ "$OSTYPE" == "linux-gnu"* || "$OSTYPE" == "linux"* ]]; then
+    # Linux (Wine/Bottles) - Run setup to place files inside bottle Settings path
+    bash "$SCRIPT_DIR/scripts/setup.sh"
 else
     echo -e "${YELLOW}!${NC} Windows setup - Please follow manual installation steps:"
     echo "  1. Install loopMIDI: https://www.tobias-erichsen.de/software/loopmidi.html"
@@ -110,6 +113,11 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     echo -e "${YELLOW}macOS Note:${NC}"
     echo "  For piano roll auto-triggering, grant Accessibility permissions to"
     echo "  Terminal and Claude Code in System Preferences → Privacy & Security"
+elif [[ "$OSTYPE" == "linux-gnu"* || "$OSTYPE" == "linux"* ]]; then
+    echo -e "${YELLOW}Linux (Wine/Bottles) Note:${NC}"
+    echo "  Ensure MCP and FL Studio point at the same Wine/Bottles Settings path."
+    echo "  Optionally export FL_BOTTLE_NAME / FL_WINE_USER / FL_STUDIO_SETTINGS_DIR."
+    echo "  For Piano Roll auto-trigger, install xdotool in your environment."
 elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
     echo -e "${YELLOW}Windows Note:${NC}"
     echo "  Install loopMIDI and create a virtual MIDI port."

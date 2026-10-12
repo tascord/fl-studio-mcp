@@ -1,4 +1,5 @@
 .venv/
+.devenv/
 .claude/
 uv.lock
 fl_controller/__pycache__/

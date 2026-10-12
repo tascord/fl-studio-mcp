@@ -27,6 +27,9 @@ from pathlib import Path
 import channels
 import midi
 import mixer
+import arrangement
+import patterns
+import playlist
 import plugins
 import transport
 
@@ -42,8 +45,7 @@ def _get_script_dir() -> Path:
         base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
     elif sys.platform == "win32":
         # Windows
-        userprofile = os.environ.get("USERPROFILE", "~")
-        base = Path(userprofile) / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+        base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
     else:
         # Linux (unlikely but handle it)
         base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
@@ -228,6 +230,22 @@ def dispatch_command(action: str, params: dict) -> dict:
         return handle_plugins_prev_preset(params)
     elif action == "plugins.getColor":
         return handle_plugins_get_color(params)
+
+    # Pattern commands
+    elif action == "patterns.create":
+        return handle_patterns_create(params)
+    elif action == "patterns.switch":
+        return handle_patterns_switch(params)
+    elif action == "patterns.getCurrent":
+        return handle_patterns_get_current()
+    elif action == "patterns.list":
+        return handle_patterns_list(params)
+
+    # Song layout commands
+    elif action == "songLayout.placeMarker":
+        return handle_song_layout_place_marker(params)
+    elif action == "songLayout.get":
+        return handle_song_layout_get(params)
 
     else:
         return {"error": f"Unknown action: {action}"}
@@ -873,3 +891,216 @@ def handle_plugins_get_color(params: dict) -> dict:
         color = plugins.getColor(index, -1, use_global)
 
     return {"color": hex(color)}
+
+
+# =============================================================================
+# Pattern Handlers
+# =============================================================================
+
+
+def _scan_pattern_indexes(max_index: int = 999, max_empty_streak: int = 64) -> list[int]:
+    """Discover likely existing pattern indexes.
+
+    FL's API doesn't expose all indexes directly, so we probe names and default
+    state and stop after a sustained empty run.
+    """
+    found: list[int] = []
+    empty_streak = 0
+
+    for index in range(1, max_index + 1):
+        try:
+            name = patterns.getPatternName(index)
+            is_default = patterns.isPatternDefault(index)
+        except Exception:
+            empty_streak += 1
+            if found and empty_streak >= max_empty_streak:
+                break
+            continue
+
+        # Include any non-default pattern, or patterns with explicit/custom name.
+        is_named = bool(name and name.strip() and name.strip() != f"Pattern {index}")
+        if (not is_default) or is_named or index == patterns.patternNumber():
+            found.append(index)
+            empty_streak = 0
+        else:
+            empty_streak += 1
+            if found and empty_streak >= max_empty_streak:
+                break
+
+    if not found:
+        found = [patterns.patternNumber()]
+
+    return sorted(set(found))
+
+
+def handle_patterns_create(params: dict) -> dict:
+    """Create and/or switch to a pattern."""
+    requested_index = params.get("index")
+    name = params.get("name", "").strip()
+
+    if requested_index is None:
+        known = _scan_pattern_indexes()
+        requested_index = (known[-1] + 1) if known else 1
+
+    index = int(requested_index)
+    if index < 1 or index > 999:
+        return {"error": "Pattern index must be between 1 and 999"}
+
+    patterns.jumpToPattern(index)
+    if name:
+        patterns.setPatternName(index, name)
+
+    return {
+        "index": index,
+        "name": patterns.getPatternName(index),
+        "created": True,
+        "active": patterns.patternNumber() == index,
+    }
+
+
+def handle_patterns_switch(params: dict) -> dict:
+    """Switch active pattern."""
+    index = int(params.get("index", 1))
+    preview = bool(params.get("preview", False))
+
+    if index < 1 or index > 999:
+        return {"error": "Pattern index must be between 1 and 999"}
+
+    patterns.jumpToPattern(index)
+    if preview:
+        # Ensures selected and starts preview if supported by this API version.
+        patterns.selectPattern(index, 1, True)
+
+    return {
+        "index": index,
+        "name": patterns.getPatternName(index),
+        "active": patterns.patternNumber() == index,
+    }
+
+
+def handle_patterns_get_current() -> dict:
+    """Get active pattern details."""
+    index = patterns.patternNumber()
+    return {
+        "index": index,
+        "name": patterns.getPatternName(index),
+        "length_beats": patterns.getPatternLength(index),
+        "is_selected": patterns.isPatternSelected(index),
+        "is_default": patterns.isPatternDefault(index),
+    }
+
+
+def handle_patterns_list(params: dict) -> dict:
+    """List known patterns with key metadata."""
+    max_results = int(params.get("max_results", 128))
+    indexes = _scan_pattern_indexes()[:max_results]
+    items = []
+
+    active = patterns.patternNumber()
+    for index in indexes:
+        items.append({
+            "index": index,
+            "name": patterns.getPatternName(index),
+            "length_beats": patterns.getPatternLength(index),
+            "is_selected": patterns.isPatternSelected(index),
+            "is_default": patterns.isPatternDefault(index),
+            "is_active": index == active,
+        })
+
+    return {
+        "active_pattern": active,
+        "count": len(items),
+        "patterns": items,
+    }
+
+
+# =============================================================================
+# Song Layout Handlers
+# =============================================================================
+
+
+def handle_song_layout_place_marker(params: dict) -> dict:
+    """Place a marker in Song layout (Playlist arrangement)."""
+    name = str(params.get("name", "")).strip()
+    tick = params.get("tick")
+
+    if not name:
+        return {"error": "Marker name is required"}
+
+    if tick is None:
+        tick = transport.getSongPos(2)  # absolute ticks
+
+    tick = int(tick)
+    if tick < 0:
+        return {"error": "tick must be >= 0"}
+
+    arrangement.addAutoTimeMarker(tick, name)
+    return {"placed": True, "name": name, "tick": tick}
+
+
+def _read_song_markers(max_markers: int, stop_after_empty: int = 8) -> list[dict]:
+    """Scan marker list by index until empty streak.
+
+    FL's scripting API does not expose marker count directly.
+    """
+    markers: list[dict] = []
+    empty_streak = 0
+
+    for index in range(max_markers):
+        try:
+            name = arrangement.getMarkerName(index)
+        except Exception:
+            empty_streak += 1
+            if empty_streak >= stop_after_empty and markers:
+                break
+            continue
+
+        if name:
+            markers.append({"index": index, "name": name})
+            empty_streak = 0
+        else:
+            empty_streak += 1
+            if empty_streak >= stop_after_empty and markers:
+                break
+
+    return markers
+
+
+def handle_song_layout_get(params: dict) -> dict:
+    """Query Song layout metadata (arrangement + playlist tracks + markers)."""
+    include_tracks = bool(params.get("include_tracks", True))
+    include_markers = bool(params.get("include_markers", True))
+    max_markers = int(params.get("max_markers", 256))
+
+    response = {
+        "mode": "song" if transport.getLoopMode() == 1 else "pattern",
+        "song_position": {
+            "hint": transport.getSongPosHint(),
+            "ticks": transport.getSongPos(2),
+        },
+        "selection": {
+            "start_tick": arrangement.selectionStart(),
+            "end_tick": arrangement.selectionEnd(),
+            "live_start_block": arrangement.liveSelectionStart(),
+            "live_end_block": arrangement.liveSelection(),
+        },
+    }
+
+    if include_tracks:
+        track_total = playlist.trackCount()
+        tracks = []
+        for track in range(1, track_total + 1):
+            tracks.append({
+                "index": track,
+                "name": playlist.getTrackName(track),
+                "is_muted": bool(playlist.isTrackMuted(track)),
+                "is_solo": bool(playlist.isTrackSolo(track)),
+                "is_selected": bool(playlist.isTrackSelected(track)),
+                "activity": playlist.getTrackActivityLevel(track),
+            })
+        response["tracks"] = tracks
+
+    if include_markers:
+        response["markers"] = _read_song_markers(max_markers=max_markers)
+
+    return response

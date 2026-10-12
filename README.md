@@ -89,13 +89,21 @@ https://github.com/user-attachments/assets/c2b1a5e7-1640-41fa-82bc-18ca7cbae9e8
 - **Read piano roll state** to see all existing notes
 - Auto-triggering via keystroke (Cmd+Opt+Y on macOS, Ctrl+Alt+Y on Windows)
 
+### Pattern & Song Layout Control
+
+- Create and activate new patterns
+- Switch active pattern for note/step editing
+- Query current pattern and known pattern list
+- Place named Song layout markers on the Playlist timeline
+- Query Song layout state (mode, position, selection, tracks, markers)
+
 ---
 
 ## Limitations
 
 > **Cannot load plugins** — The FL Studio scripting API does not support loading new VST/AU plugins. You can only control parameters of plugins that are already loaded in your project.
 
-> **No pattern management (yet)** — The server can write notes and step-sequencer steps into a pattern, but it has no tools to create, switch, rename, or clone patterns. Everything goes into whichever pattern is currently selected in FL Studio, so pick or create the pattern yourself before asking for notes. (FL Studio's scripting API does support this through the `patterns` module, so it could be added.)
+> **Direct clip placement is still limited** — The current FL Studio scripting API used here does not expose a reliable direct "insert pattern clip on Playlist track at tick" primitive. This server supports Song layout marker placement/query and pattern management, but true clip injection into the Playlist timeline may still require manual placement in FL Studio.
 
 ---
 
@@ -103,9 +111,10 @@ https://github.com/user-attachments/assets/c2b1a5e7-1640-41fa-82bc-18ca7cbae9e8
 
 - **FL Studio 20.7+** (MIDI Controller Scripting API)
 - **Python 3.10+**
-- **macOS** or **Windows**
+- **macOS**, **Windows**, or **Linux (via Wine/Bottles)**
   - macOS: IAC Driver (built-in, needs to be enabled)
   - Windows: [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html)
+  - Linux/Wine: a MIDI route visible to both Wine FL Studio and host (ALSA/JACK)
 
 ---
 
@@ -137,7 +146,7 @@ Both installers will:
 
 1. Install [uv](https://github.com/astral-sh/uv) if not present
 2. Install Python dependencies
-3. Guide you through enabling virtual MIDI ports (IAC Driver on Mac, loopMIDI on Windows)
+3. Guide you through enabling virtual MIDI ports (IAC Driver on Mac, loopMIDI on Windows, Wine/Bottles path detection on Linux)
 4. Install the FL Studio MIDI controller script
 5. Install the Piano Roll script (ComposeWithLLM)
 6. Configure Claude Desktop or Claude Code automatically (`scripts/install_mcp_for_claude.sh` / `scripts/install_mcp_for_claude.ps1`)
@@ -174,6 +183,16 @@ pip install -e .
 2. Create a virtual port (any name works)
 3. Keep loopMIDI running while using FL Studio
 
+#### Linux (Wine/Bottles)
+
+1. Run FL Studio inside Bottles
+2. Ensure host MIDI ports are available (`aconnect -o` should list at least one output)
+3. If auto-detection fails, set one or more env vars before launching MCP:
+  - `FL_STUDIO_SETTINGS_DIR=/path/to/.../FL Studio/Settings`
+  - `FL_BOTTLE_NAME=<bottle-name>`
+  - `FL_WINE_USER=<wine-user-dir>`
+  - `FL_MIDI_OUTPUT_PORT=<port-name-fragment>` if OpenCode picks the wrong ALSA MIDI output
+
 ### 3. Install FL Studio Scripts
 
 Copy the controller script to FL Studio's Hardware folder:
@@ -182,6 +201,10 @@ Copy the controller script to FL Studio's Hardware folder:
 # macOS
 mkdir -p ~/Documents/Image-Line/FL\ Studio/Settings/Hardware/FLStudioMCP
 cp fl_controller/device_FLStudioMCP.py ~/Documents/Image-Line/FL\ Studio/Settings/Hardware/FLStudioMCP/
+
+# Linux (Bottles example)
+mkdir -p ~/.var/app/com.usebottles.bottles/data/bottles/bottles/<bottle>/drive_c/users/<wine-user>/Documents/Image-Line/FL\ Studio/Settings/Hardware/FLStudioMCP
+cp fl_controller/device_FLStudioMCP.py ~/.var/app/com.usebottles.bottles/data/bottles/bottles/<bottle>/drive_c/users/<wine-user>/Documents/Image-Line/FL\ Studio/Settings/Hardware/FLStudioMCP/
 
 # Windows
 mkdir "%USERPROFILE%\Documents\Image-Line\FL Studio\Settings\Hardware\FLStudioMCP"
@@ -194,6 +217,9 @@ Copy the Piano Roll script:
 # macOS
 cp scripts/ComposeWithLLM.pyscript ~/Documents/Image-Line/FL\ Studio/Settings/Piano\ roll\ scripts/
 
+# Linux (Bottles example)
+cp scripts/ComposeWithLLM.pyscript ~/.var/app/com.usebottles.bottles/data/bottles/bottles/<bottle>/drive_c/users/<wine-user>/Documents/Image-Line/FL\ Studio/Settings/Piano\ roll\ scripts/
+
 # Windows
 copy scripts\ComposeWithLLM.pyscript "%USERPROFILE%\Documents\Image-Line\FL Studio\Settings\Piano roll scripts\"
 ```
@@ -202,9 +228,15 @@ copy scripts\ComposeWithLLM.pyscript "%USERPROFILE%\Documents\Image-Line\FL Stud
 
 1. **Restart FL Studio** (if it's running)
 2. Go to **Options > MIDI Settings**
-3. Under **Input**, find your virtual MIDI port (e.g., "IAC Driver Bus 1")
-4. Set the **Controller type** to **FLStudioMCP**
+3. Find the virtual bridge port that the MCP server will talk to. On Linux/Wine that is usually **Midi Through Port-0**; on macOS it is usually the IAC port; on Windows it is the loopMIDI port you created.
+4. Set that port's **Controller type** to **FLStudioMCP** in both places FL Studio exposes it:
+  - the **Input** row for that port
+  - the **Output** row for that port
 5. Enable the port (click to highlight it)
+6. Leave your actual keyboard/controller row separate. For example, your **KL Essential 49 mk3 MIDI** row can stay on the keyboard's normal controller script or `generic controller`; it does not need to be the MCP bridge.
+7. If you changed the script or binding, click **Update MIDI scripts** and restart FL Studio once.
+
+> The MCP bridge is not the same thing as your keyboard. The bridge is the virtual MIDI port FL Studio uses to exchange commands with the MCP server; your keyboard is just how you play notes into FL Studio.
 
 ### 5. Configure Your MCP Client
 
@@ -225,6 +257,19 @@ Add to your Claude Desktop config:
 ```
 
 For Claude Code, add to your MCP settings (`~/.claude.json`, or run `claude mcp add`).
+
+### 6. Optional: Run with devenv (Linux-friendly)
+
+This repo now includes `.envrc`, `devenv.yaml`, and `devenv.nix`.
+
+```bash
+direnv allow
+devenv shell
+fl-mcp-sync
+fl-mcp-setup
+fl-mcp-doctor
+fl-mcp-run
+```
 
 ---
 
@@ -261,8 +306,7 @@ fl-studio-mcp
 
 1. Open FL Studio and select a channel
 2. Open the Piano Roll (F7 or double-click the channel)
-3. The first time, manually run the script: **Tools > Scripting > ComposeWithLLM**
-4. After that, the MCP tools will auto-trigger the script
+3. The MCP tools will auto-trigger the script
 
 ---
 
@@ -355,6 +399,17 @@ fl-studio-mcp
 | `fl_get_piano_roll_info` | Get piano roll system info |
 | `fl_clear_request_queue` | Cancel pending queued changes |
 
+### Patterns & Song Layout
+
+| Tool | Description |
+|------|-------------|
+| `fl_create_pattern` | Create and activate a new pattern |
+| `fl_switch_pattern` | Switch active pattern |
+| `fl_get_current_pattern` | Get active pattern details |
+| `fl_list_patterns` | List known patterns |
+| `fl_place_song_marker` | Place a marker in Song layout |
+| `fl_get_song_layout` | Query Song layout (mode, selection, tracks, markers) |
+
 ---
 
 ## Example Workflows
@@ -396,10 +451,11 @@ fl-studio-mcp
 ### "Not connected to FL Studio"
 
 1. Ensure FL Studio is running
-2. Check that the FLStudioMCP controller is enabled in MIDI Settings
+2. Check that the MCP bridge port is enabled in MIDI Settings and that both its **Input** and **Output** rows are set to `FLStudioMCP`
 3. On Mac, verify IAC Driver is enabled in Audio MIDI Setup
 4. On Windows, verify loopMIDI is running
-5. Restart FL Studio after enabling the controller
+5. On Linux/Wine, verify MCP points to the same FL Studio Settings path as your Bottle
+6. Restart FL Studio after enabling the controller
 
 ### "Timeout waiting for FL Studio response"
 
@@ -412,13 +468,15 @@ fl-studio-mcp
 1. First time: manually run **Tools > Scripting > ComposeWithLLM** in FL Studio
 2. On macOS: grant Accessibility permissions when prompted
 3. On Windows: the MCP server foregrounds the FL Studio window automatically before sending the hotkey — if FL Studio isn't running or is minimized to the system tray, the trigger can't find it and will fall back to a warning telling you to press the hotkey manually
-4. Try pressing Cmd+Opt+Y (macOS) or Ctrl+Alt+Y (Windows) manually to confirm the hotkey is bound to the script in FL Studio
-5. If you just updated the server code (e.g. pulled a fix), **fully restart** your MCP client (Claude Desktop/Code) — reconnecting the MCP server alone does not respawn the underlying process
+4. On Linux/Wine: install `xdotool`; auto-trigger uses it to focus the FL Studio window and send `Ctrl+Alt+Y`
+5. Try pressing Cmd+Opt+Y (macOS) or Ctrl+Alt+Y (Windows/Linux) manually to confirm the hotkey is bound to the script in FL Studio
+6. If you just updated the server code (e.g. pulled a fix), **fully restart** your MCP client (Claude Desktop/Code) — reconnecting the MCP server alone does not respawn the underlying process
 
 ### No MIDI ports available
 
 - **macOS**: Enable IAC Driver in Audio MIDI Setup
 - **Windows**: Install and run loopMIDI
+- **Linux/Wine**: Ensure ALSA/JACK MIDI bridge exists and is visible from host Python
 
 ---
 
@@ -458,7 +516,7 @@ This MCP server uses a hybrid approach:
 
 **Piano Roll:**
 1. MCP server writes note requests to JSON file
-2. Sends keystroke (Cmd+Opt+Y on macOS, Ctrl+Alt+Y on Windows) to trigger FL Studio script — on Windows, the FL Studio window is foregrounded first so the keystroke actually reaches it
+2. Sends keystroke (Cmd+Opt+Y on macOS, Ctrl+Alt+Y on Windows/Linux) to trigger FL Studio script — on Windows/Linux, the FL Studio window is foregrounded first so the keystroke actually reaches it
 3. Piano Roll script reads JSON and modifies notes
 
 ---

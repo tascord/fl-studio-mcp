@@ -24,12 +24,6 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# FL Studio paths
-FL_SETTINGS="$HOME/Documents/Image-Line/FL Studio/Settings"
-FL_HARDWARE="$FL_SETTINGS/Hardware"
-MCP_CONTROLLER_DIR="$FL_HARDWARE/FLStudioMCP"
-FL_PIANO_SCRIPTS="$FL_SETTINGS/Piano roll scripts"
-
 # Detect OS
 if [[ "$OSTYPE" == "darwin"* ]]; then
     OS="mac"
@@ -38,6 +32,69 @@ elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]];
 else
     OS="linux"
 fi
+
+find_bottles_fl_settings() {
+    local bottles_dir="${BOTTLES_DIR:-$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles}"
+    local bottle_name="${FL_BOTTLE_NAME:-}"
+    local wine_user="${FL_WINE_USER:-${USER:-}}"
+
+    if [[ ! -d "$bottles_dir" ]]; then
+        bottles_dir="$HOME/.local/share/bottles/bottles"
+    fi
+
+    if [[ ! -d "$bottles_dir" ]]; then
+        return 1
+    fi
+
+    local bottles=()
+    if [[ -n "$bottle_name" ]]; then
+        bottles=("$bottles_dir/$bottle_name")
+    else
+        while IFS= read -r -d '' dir; do
+            bottles+=("$dir")
+        done < <(find "$bottles_dir" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+    fi
+
+    local bottle user_dir settings
+    for bottle in "${bottles[@]}"; do
+        [[ -d "$bottle/drive_c/users" ]] || continue
+
+        if [[ -n "$wine_user" ]]; then
+            settings="$bottle/drive_c/users/$wine_user/Documents/Image-Line/FL Studio/Settings"
+            if [[ -d "$settings" ]]; then
+                echo "$settings"
+                return 0
+            fi
+        fi
+
+        while IFS= read -r -d '' user_dir; do
+            settings="$user_dir/Documents/Image-Line/FL Studio/Settings"
+            if [[ -d "$settings" ]]; then
+                echo "$settings"
+                return 0
+            fi
+        done < <(find "$bottle/drive_c/users" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+    done
+
+    return 1
+}
+
+if [[ -n "${FL_STUDIO_SETTINGS_DIR:-}" ]]; then
+    FL_SETTINGS="$FL_STUDIO_SETTINGS_DIR"
+elif [[ "$OS" == "linux" ]]; then
+    if detected_settings="$(find_bottles_fl_settings)"; then
+        FL_SETTINGS="$detected_settings"
+    else
+        FL_SETTINGS="$HOME/.fl-studio/Settings"
+    fi
+else
+    FL_SETTINGS="$HOME/Documents/Image-Line/FL Studio/Settings"
+fi
+
+# FL Studio paths
+FL_HARDWARE="$FL_SETTINGS/Hardware"
+MCP_CONTROLLER_DIR="$FL_HARDWARE/FLStudioMCP"
+FL_PIANO_SCRIPTS="$FL_SETTINGS/Piano roll scripts"
 
 # Step 1: Virtual MIDI Setup
 echo "Step 1: Checking Virtual MIDI Setup..."
@@ -73,6 +130,17 @@ elif [[ "$OS" == "windows" ]]; then
     echo "Create a virtual MIDI port in loopMIDI (any name works)."
     echo ""
     read -p "Press Enter when loopMIDI is configured..."
+else
+    echo "Linux detected (Wine/Bottles mode)."
+    echo "Using FL Studio Settings directory:"
+    echo "  $FL_SETTINGS"
+    echo ""
+    echo "If this path is wrong, set one of:"
+    echo "  - FL_STUDIO_SETTINGS_DIR=/full/path/to/.../FL Studio/Settings"
+    echo "  - FL_BOTTLE_NAME=<your bottle name>"
+    echo "  - FL_WINE_USER=<wine user dir>"
+    echo ""
+    read -p "Press Enter to continue with this path, or Ctrl+C to cancel..."
 fi
 
 # Step 2: Install FL Studio MIDI Controller

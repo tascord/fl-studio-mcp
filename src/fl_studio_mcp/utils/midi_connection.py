@@ -14,25 +14,11 @@ instead of keystrokes.
 from __future__ import annotations
 
 import json
-import platform
+import os
 import time
-from pathlib import Path
 from typing import Any
 
-
-def _get_fl_hardware_dir() -> Path:
-    """Get the FL Studio Hardware scripts directory."""
-    system = platform.system()
-
-    if system in ("Darwin", "Windows"):
-        base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
-    else:
-        # Linux fallback
-        base = Path.home() / ".fl-studio" / "Settings"
-
-    hardware_dir = base / "Hardware" / "FLStudioMCP"
-    hardware_dir.mkdir(parents=True, exist_ok=True)
-    return hardware_dir
+from fl_studio_mcp.utils.fl_paths import get_fl_hardware_dir
 
 
 class MIDIConnection:
@@ -53,7 +39,7 @@ class MIDIConnection:
         self._error: str | None = None
 
         # File paths for JSON communication
-        self._hardware_dir = _get_fl_hardware_dir()
+        self._hardware_dir = get_fl_hardware_dir()
         self._command_file = self._hardware_dir / "mcp_command.json"
         self._response_file = self._hardware_dir / "mcp_response.json"
 
@@ -92,25 +78,48 @@ class MIDIConnection:
 
         if not output_ports:
             self._error = (
-                "No MIDI output ports found. On Mac, enable IAC Driver in Audio MIDI Setup."
+                "No MIDI output ports found. Ensure a virtual MIDI bridge exists "
+                "(IAC on macOS, loopMIDI on Windows, a Wine/Bottles-visible ALSA/JACK "
+                "port on Linux)."
             )
             return False
 
-        # Look for IAC Driver (Mac) or other virtual MIDI ports
-        target_port = None
-        for port_name in output_ports:
-            # Prefer IAC Driver on Mac
-            if "IAC" in port_name:
-                target_port = port_name
-                break
-            # Also accept loopMIDI on Windows or any port with "FL" in name
-            if "loopMIDI" in port_name or "FL" in port_name.upper():
-                target_port = port_name
-                break
+        explicit_port = os.environ.get("FL_MIDI_OUTPUT_PORT")
+        if explicit_port:
+            target_port = None
+            for port_name in output_ports:
+                if explicit_port.lower() in port_name.lower():
+                    target_port = port_name
+                    break
 
-        # If no specific port found, use the first available
-        if target_port is None:
-            target_port = output_ports[0]
+            if target_port is None:
+                self._error = (
+                    f"FL_MIDI_OUTPUT_PORT='{explicit_port}' did not match any available "
+                    f"MIDI output ports: {', '.join(output_ports)}"
+                )
+                return False
+        else:
+            # Look for common virtual MIDI ports first.
+            target_port = None
+            preferred_terms = (
+                "WINE",
+                "Bottles",
+                "FL",
+                "loopMIDI",
+                "loopMIDI Port",
+                "IAC",
+                "MIDI Through",
+            )
+
+            for port_name in output_ports:
+                upper_name = port_name.upper()
+                if any(term.upper() in upper_name for term in preferred_terms):
+                    target_port = port_name
+                    break
+
+            # If no specific port found, use the first available
+            if target_port is None:
+                target_port = output_ports[0]
 
         try:
             self._port = mido.open_output(target_port)
@@ -245,6 +254,7 @@ class MIDIConnection:
             "connected": self.is_connected,
             "port_name": self._port_name,
             "available_ports": output_ports,
+            "hardware_dir": str(self._hardware_dir),
             "command_file": str(self._command_file),
             "response_file": str(self._response_file),
             "error": self._error,

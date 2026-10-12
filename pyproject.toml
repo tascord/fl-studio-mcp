@@ -27,7 +27,7 @@ dependencies = [
     "fastmcp>=2.0",
     "mido>=1.3.0",
     "python-rtmidi>=1.5.0",
-    "pynput>=1.7",
+    "pynput>=1.7; platform_system == 'Darwin' or platform_system == 'Windows'",
 ]
 
 [project.optional-dependencies]

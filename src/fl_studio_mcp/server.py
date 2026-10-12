@@ -6,14 +6,15 @@ This MCP server provides tools to control FL Studio through two mechanisms:
 
 Requirements:
 - FL Studio 20.7+ running
-- FLStudioMCP controller script installed (run: ./scripts/setup_mac.sh)
+- FLStudioMCP controller script installed (run: ./scripts/setup.sh)
 - On Mac: IAC Driver enabled in Audio MIDI Setup
 - On Windows: loopMIDI virtual MIDI ports configured
+- On Linux: FL Studio running under Wine/Bottles with visible host MIDI port(s)
 - For piano roll: ComposeWithLLM.pyscript installed in FL Studio
 
 Limitations:
 - Cannot load new plugins (only control existing ones)
-- Cannot create new patterns programmatically
+- Direct pattern clip insertion into Playlist timeline is still limited
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from fastmcp import FastMCP
 from fl_studio_mcp.tools import (
     register_channel_tools,
     register_mixer_tools,
+    register_pattern_song_tools,
     register_piano_roll_tools,
     register_plugin_tools,
     register_transport_tools,
@@ -43,10 +45,12 @@ Available tool categories:
 - Mixer: Volume, pan, mute, solo, track management
 - Channels: Channel info, note triggering, step sequencer
 - Plugins: Parameter control, preset navigation (cannot load new plugins)
+- Patterns: Create/switch/query patterns
+- Song Layout: Place/query arrangement markers and playlist track state
 
 Important limitations:
 1. Cannot load new VST/AU plugins - only control existing ones
-2. Cannot create new patterns programmatically
+2. Direct pattern clip insertion into Playlist timeline is still limited
 3. Note triggering (fl_trigger_note) is real-time only - notes won't persist
    unless FL Studio is recording. Use step sequencer (fl_set_grid_bit) for
    persistent drum patterns.
@@ -140,6 +144,7 @@ register_mixer_tools(mcp)
 register_channel_tools(mcp)
 register_plugin_tools(mcp)
 register_piano_roll_tools(mcp)
+register_pattern_song_tools(mcp)
 
 
 def main():
